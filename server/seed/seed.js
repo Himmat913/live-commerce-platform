@@ -14,6 +14,12 @@
 // Run with: npm run seed   (from inside server/)
 
 const path = require("path");
+const dns = require("node:dns");
+
+// Work around this machine's default DNS resolver failing Node.js SRV lookups.
+// This affects DNS resolution only; TLS certificate verification remains enabled.
+dns.setServers(["8.8.8.8"]);
+
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const mongoose = require("mongoose");
@@ -119,7 +125,35 @@ async function seed() {
     process.exit(1);
   }
 
-  await mongoose.connect(process.env.MONGO_URI);
+  let connected = false;
+
+for (let attempt = 1; attempt <= 5; attempt++) {
+  try {
+    console.log(`MongoDB connection attempt ${attempt}/5...`);
+
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 20000,
+    });
+
+    connected = true;
+    break;
+  } catch (error) {
+    console.error(`Connection attempt ${attempt} failed:`, error.message);
+
+    await mongoose.disconnect().catch(() => {});
+
+    if (attempt < 5) {
+      console.log("Retrying in 3 seconds...");
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    } else {
+      throw error;
+    }
+  }
+}
+
+if (!connected) {
+  throw new Error("Could not connect to MongoDB after 5 attempts.");
+}
   console.log("✅ Connected to MongoDB for seeding:", mongoose.connection.name);
 
   console.log("🧹 Clearing existing demo collections...");
